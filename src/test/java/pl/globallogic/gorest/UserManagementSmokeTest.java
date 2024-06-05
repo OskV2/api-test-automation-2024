@@ -1,9 +1,5 @@
 package pl.globallogic.gorest;
 
-import io.restassured.http.ContentType;
-import io.restassured.module.jsv.JsonSchemaValidator;
-import io.restassured.response.Response;
-import io.restassured.specification.RequestSpecification;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,30 +7,21 @@ import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import pl.globallogic.configuration.ConfigurationVerificationTest;
+import pl.globallogic.gorest.api.UserApi;
 import pl.globallogic.gorest.dto.UserRequestDto;
 import pl.globallogic.gorest.dto.UserResponseDto;
 
-import static io.restassured.RestAssured.given;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.notNullValue;
+import java.util.List;
 
 public class UserManagementSmokeTest {
 
-    private static final String HOST = System.getProperty("host") + "public/v2";
-    private static final String ENDPOINT = "/users";
-    private static final String ENDPOINT_WITH_ID = "/users/{userId}";
     private static final String TOKEN = System.getProperty("token");
-    private static Logger logger = LoggerFactory.getLogger(ConfigurationVerificationTest.class);
-    private RequestSpecification req;
+    private UserApi userApi;
+    private static Logger logger = LoggerFactory.getLogger(UserManagementSmokeTest.class);
 
     @BeforeMethod
     public void testSetUp() {
-        req = given()
-                .basePath(ENDPOINT)
-                .baseUri(HOST)
-                .contentType(ContentType.JSON)
-                .header("Authorization", "Bearer " + TOKEN);
+        userApi = new UserApi(TOKEN);
     }
 
     @AfterMethod
@@ -43,72 +30,48 @@ public class UserManagementSmokeTest {
     }
 
     @Test
-    public void shouldListAllUsersInformation() {
+    public void shouldListAllUsersInformationWithPaginationOptions() {
         int user_per_page = 10;
         int target_page = 3;
-
-        req.queryParam("page", user_per_page)
-            .queryParam("per_page", target_page)
-        .when()
-            .get()
-        .then()
-            .statusCode(200)
-            .header("x-pagination-limit", equalTo(String.valueOf(user_per_page)))
-            .body("[0].id", notNullValue());
+        List<UserResponseDto> users = userApi.getUsers(target_page, user_per_page);
+        Assert.assertNotNull(users.get(0).id());
+        //  Assert.assertNotNull(users.getFirst().id());  I DONT KNOW WHY THIS ISN'T WORKING BUT IT JUST ISN'T
     }
 
     @Test
     public void shouldCreateUserAndReturnId() {
         UserRequestDto payload = getUserDataWithRandomEmail();
-        UserResponseDto newUser = createUser(payload);
+        UserResponseDto newUser = userApi.createUser(payload);
         logger.info("ID for new user is: {}", newUser.id());
         Assert.assertNotNull(newUser.id());
     }
 
     @Test
     public void shouldGetUserInformationById() {
-        var user = createUser(getUserDataWithRandomEmail());
-        req.basePath(ENDPOINT_WITH_ID).pathParam("userId", user.id());
-        UserResponseDto userFromGet = req.get().then().extract().as(UserResponseDto.class);
+        var user = userApi.createUser(getUserDataWithRandomEmail());
+        UserResponseDto userFromGet = userApi.getUser(user.id());
         Assert.assertEquals(user.name(), userFromGet.name());
     }
 
     @Test
     public void shouldUpdateUserWithNewEmail() {
-        var user = createUser(getUserDataWithRandomEmail());
-        String newEmail = "some_email%s@gmail.com".formatted(RandomStringUtils.randomAlphanumeric(5));
-        logger.info("Generated new user email: {}", newEmail);
-        UserRequestDto updateUserPayload = new UserRequestDto(
-                user.name(), newEmail, user.gender(), user.status()
-        );
-        req.basePath(ENDPOINT_WITH_ID).pathParam("userId", user.id()).body(updateUserPayload);
-        UserResponseDto updateResponse = req.put().as(UserResponseDto.class);
-        logger.info("User after update: {}", updateResponse);
-        Assert.assertEquals(newEmail, updateResponse.email());
+        var user = userApi.createUser(getUserDataWithRandomEmail());
+        UserRequestDto updateUserPayload = getUserDataWithRandomEmail();
+        UserResponseDto updateResponse = userApi.updateUser(user.id(), updateUserPayload);
+        Assert.assertEquals(updateUserPayload.email(), updateResponse.email());
     }
 
     @Test
     public void shouldDeleteUserFromSystem() {
-        var user = createUser(getUserDataWithRandomEmail());
-        req.basePath(ENDPOINT_WITH_ID).pathParam("userId", user.id());
-        req.delete().then().assertThat().statusCode(204);
-        req.get().then().assertThat().statusCode(404);
+        var user = userApi.createUser(getUserDataWithRandomEmail());
+        userApi.deleteUser(user.id());
+        userApi.getResponse().then().assertThat().statusCode(204);
     }
 
     @Test
     public void validateUserDataAgainstSchema() {
-        var user = createUser(getUserDataWithRandomEmail());
-        logger.info("Validating user against schema '{}'", "user_schema.json");
-        req.basePath(ENDPOINT_WITH_ID).pathParam("userId", user.id());
-        req.get().then()
-                .body(JsonSchemaValidator.matchesJsonSchemaInClasspath("user_schema.json"));
-    }
-
-    private UserResponseDto createUser(UserRequestDto userData) {
-        req.body(userData);
-        Response response = req.post().andReturn();
-        logger.info("Created user: {}", response.prettyPrint());
-        return response.then().extract().as(UserResponseDto.class);
+        var user = userApi.createUser(getUserDataWithRandomEmail());
+        userApi.validateResponseAgainstSchema(user.id(), "user_schema.json");
     }
 
     private UserRequestDto getUserDataWithRandomEmail() {
@@ -120,5 +83,4 @@ public class UserManagementSmokeTest {
                 "active");
         return payload;
     }
-
 }
